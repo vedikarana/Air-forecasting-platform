@@ -1,0 +1,16 @@
+﻿# Virtual env
+venv/
+__pycache__/
+
+# Data & models
+data/
+models/
+*.npy
+*.npz
+*.pkl
+*.csv
+*.zip
+.env
+
+# Streamlit
+.streamlit/secrets.toml
