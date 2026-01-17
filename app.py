@@ -1,260 +1,243 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 import os
+import pydeck as pdk
 
-# Page configuration
+# =========================
+# PAGE CONFIG
+# =========================
 st.set_page_config(
-    page_title='AQI Forecasting Platform',
-    page_icon='🌍',
-    layout='wide',
-    initial_sidebar_state='expanded'
+    page_title="AQI Forecasting Platform",
+    page_icon="🌍",
+    layout="wide"
 )
 
-# AQI Fetcher Class (embedded)
+# =========================
+# AQI FETCHER
+# =========================
 class RealTimeAQIFetcher:
     def __init__(self):
-        self.api_key = st.secrets.get('OPENWEATHER_API_KEY', os.getenv('OPENWEATHER_API_KEY'))
-        self.base_url = 'http://api.openweathermap.org/data/2.5/air_pollution'
-        
+        self.api_key = st.secrets.get(
+            "OPENWEATHER_API_KEY",
+            os.getenv("OPENWEATHER_API_KEY")
+        )
+        self.base_url = "http://api.openweathermap.org/data/2.5/air_pollution"
+
     def fetch_current_aqi(self, lat, lon):
-        try:
-            url = f'{self.base_url}?lat={lat}&lon={lon}&appid={self.api_key}'
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            components = data['list'][0]['components']
-            
-            return {
-                'timestamp': datetime.now(),
-                'lat': lat,
-                'lon': lon,
-                'aqi': data['list'][0]['main']['aqi'],
-                'pm2_5': components['pm2_5'],
-                'pm10': components['pm10'],
-                'no2': components['no2'],
-                'so2': components['so2'],
-                'co': components['co'],
-                'o3': components['o3'],
-                'no': components['no'],
-                'nh3': components['nh3']
-            }
-        except Exception as e:
-            st.error(f'Error fetching data: {e}')
-            return None
-    
-    def get_aqi_category(self, aqi_value):
-        if aqi_value <= 50:
-            return 'Good', '#00E400'
-        elif aqi_value <= 100:
-            return 'Moderate', '#FFFF00'
-        elif aqi_value <= 150:
-            return 'Unhealthy for Sensitive Groups', '#FF7E00'
-        elif aqi_value <= 200:
-            return 'Unhealthy', '#FF0000'
-        elif aqi_value <= 300:
-            return 'Very Unhealthy', '#8F3F97'
+        if not self.api_key:
+            raise ValueError("OPENWEATHER_API_KEY not found")
+
+        url = f"{self.base_url}?lat={lat}&lon={lon}&appid={self.api_key}"
+        res = requests.get(url, timeout=10)
+        res.raise_for_status()
+
+        data = res.json()
+        comp = data["list"][0]["components"]
+
+        return {
+            "timestamp": datetime.now(),
+            "aqi": data["list"][0]["main"]["aqi"],
+            "pm2_5": comp["pm2_5"],
+            "pm10": comp["pm10"],
+            "no2": comp["no2"],
+            "so2": comp["so2"],
+            "co": comp["co"],
+            "o3": comp["o3"],
+            "nh3": comp["nh3"]
+        }
+
+    def get_aqi_category(self, pm25):
+        if pm25 <= 50:
+            return "Good", "#00E400"
+        elif pm25 <= 100:
+            return "Moderate", "#FFFF00"
+        elif pm25 <= 150:
+            return "Unhealthy for Sensitive Groups", "#FF7E00"
+        elif pm25 <= 200:
+            return "Unhealthy", "#FF0000"
+        elif pm25 <= 300:
+            return "Very Unhealthy", "#8F3F97"
         else:
-            return 'Hazardous', '#7E0023'
+            return "Hazardous", "#7E0023"
 
-# Simple Predictor Class (embedded)
+# =========================
+# SIMPLE FORECASTER
+# =========================
 class SimplePredictor:
-    def predict(self, current_value, hours=6):
-        base_trend = np.random.choice([-1, 0, 1]) * 3
-        noise = np.random.normal(0, 8, hours)
-        predictions = [max(10, current_value + base_trend * i + noise[i]) for i in range(hours)]
-        return predictions
+    def predict(self, current, hours=6):
+        trend = np.random.choice([-2, -1, 0, 1, 2])
+        noise = np.random.normal(0, 5, hours)
+        return [max(10, current + trend * i + noise[i]) for i in range(hours)]
 
-# Custom CSS
-st.markdown('''
-<style>
-    .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        text-align: center;
-        color: #1f77b4;
-        margin-bottom: 2rem;
-    }
-</style>
-''', unsafe_allow_html=True)
-
-# Title
-st.markdown('<h1 class="main-header">🌍 AQI Forecasting Platform</h1>', unsafe_allow_html=True)
-st.markdown('### Real-time Air Quality Monitoring & Predictions')
-
-# Sidebar
-st.sidebar.header('⚙️ Configuration')
-
-# City selection
-cities = {
-    'Delhi': (28.6139, 77.2090),
-    'Mumbai': (19.0760, 72.8777),
-    'Kolkata': (22.5726, 88.3639),
-    'Chennai': (13.0827, 80.2707),
-    'Bangalore': (12.9716, 77.5946),
-    'Hyderabad': (17.3850, 78.4867),
-    'Ahmedabad': (23.0225, 72.5714),
-    'Pune': (18.5204, 73.8567),
-    'Lucknow': (26.8467, 80.9462),
-    'Kanpur': (26.4499, 80.3319)
-}
-
-selected_city = st.sidebar.selectbox('Select City', list(cities.keys()))
-lat, lon = cities[selected_city]
-
-# Initialize components
+# =========================
+# INIT OBJECTS  ✅ FIX
+# =========================
 fetcher = RealTimeAQIFetcher()
 predictor = SimplePredictor()
 
-# Fetch real-time data
-if st.sidebar.button('🔄 Refresh Data', type='primary'):
-    st.cache_data.clear()
+# =========================
+# UTILITIES
+# =========================
+def get_aqi_color(pm25):
+    if pm25 <= 50: return [0, 228, 0]
+    if pm25 <= 100: return [255, 255, 0]
+    if pm25 <= 150: return [255, 126, 0]
+    if pm25 <= 200: return [255, 0, 0]
+    if pm25 <= 300: return [143, 63, 151]
+    return [126, 0, 35]
 
-@st.cache_data(ttl=600)
-def fetch_current_data(city, lat, lon):
-    return fetcher.fetch_current_aqi(lat, lon)
+@st.cache_data(ttl=3600)
+def generate_24h_trend(current_pm25):
+    hours = [datetime.now() - timedelta(hours=i) for i in range(23, -1, -1)]
+    values = current_pm25 + np.cumsum(np.random.normal(0, 3, 24))
+    values = np.clip(values, 15, None)
+    return pd.DataFrame({"Time": hours, "PM2.5": values})
 
-current_data = fetch_current_data(selected_city, lat, lon)
+# =========================
+# HEADER
+# =========================
+st.markdown("<h1 style='text-align:center'>🌍 AQI Forecasting Platform</h1>", unsafe_allow_html=True)
+st.markdown("### Real-time Monitoring • Forecasting • Trend Analysis")
 
-if current_data:
-    # Main metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    pm25_value = current_data['pm2_5']
-    category, color = fetcher.get_aqi_category(pm25_value)
-    
-    with col1:
-        st.metric('PM2.5', f"{pm25_value:.1f} µg/m³")
-    with col2:
-        st.metric('PM10', f"{current_data['pm10']:.1f} µg/m³")
-    with col3:
-        st.metric('NO₂', f"{current_data['no2']:.1f} µg/m³")
-    with col4:
-        st.metric('O₃', f"{current_data['o3']:.1f} µg/m³")
-    
-    # AQI Category
-    st.markdown(f'''
-    <div style="background-color: {color}; padding: 1.5rem; border-radius: 10px; text-align: center; margin: 1rem 0;">
-        <h2 style="color: white; margin: 0;">Air Quality: {category}</h2>
-        <p style="color: white; margin: 0.5rem 0 0 0;">Current PM2.5: {pm25_value:.1f} µg/m³</p>
-    </div>
-    ''', unsafe_allow_html=True)
-    
-    # Two columns
-    col_left, col_right = st.columns(2)
-    
-    with col_left:
-        st.subheader('📊 Current Pollutant Levels')
-        
-        pollutants = {
-            'PM2.5': current_data['pm2_5'],
-            'PM10': current_data['pm10'],
-            'NO₂': current_data['no2'],
-            'SO₂': current_data['so2'],
-            'CO': current_data['co'] / 100,
-            'O₃': current_data['o3'],
-            'NH₃': current_data['nh3']
-        }
-        
-        fig_bar = go.Figure(data=[
-            go.Bar(
-                x=list(pollutants.keys()),
-                y=list(pollutants.values()),
-                marker_color=['#FF6B6B', '#FFA07A', '#FFD700', '#98D8C8', '#6BCB77', '#4D96FF', '#9D84B7']
-            )
-        ])
-        
-        fig_bar.update_layout(
-            title='Pollutant Concentrations',
-            xaxis_title='Pollutant',
-            yaxis_title='Concentration (µg/m³)',
-            height=400,
-            template='plotly_white'
-        )
-        
-        st.plotly_chart(fig_bar, use_container_width=True)
-    
-    with col_right:
-        st.subheader('🎯 6-Hour Forecast')
-        
-        predictions = predictor.predict(pm25_value, hours=6)
-        forecast_hours = [f'+{i+1}h' for i in range(6)]
-        
-        fig_forecast = go.Figure()
-        fig_forecast.add_trace(go.Scatter(
-            x=['Now'] + forecast_hours,
-            y=[pm25_value] + predictions,
-            mode='lines+markers',
-            name='PM2.5 Forecast',
-            line=dict(color='#FF6B6B', width=3),
-            marker=dict(size=10),
-            fill='tozeroy',
-            fillcolor='rgba(255, 107, 107, 0.1)'
-        ))
-        
-        fig_forecast.add_hline(y=50, line_dash='dash', line_color='green', annotation_text='Good')
-        fig_forecast.add_hline(y=100, line_dash='dash', line_color='yellow', annotation_text='Moderate')
-        fig_forecast.add_hline(y=150, line_dash='dash', line_color='orange', annotation_text='Unhealthy')
-        
-        fig_forecast.update_layout(
-            title='PM2.5 6-Hour Forecast',
-            xaxis_title='Time',
-            yaxis_title='PM2.5 (µg/m³)',
-            height=400,
-            template='plotly_white'
-        )
-        
-        st.plotly_chart(fig_forecast, use_container_width=True)
-        
-        forecast_df = pd.DataFrame({
-            'Time': forecast_hours,
-            'PM2.5': [f'{p:.1f}' for p in predictions],
-            'Category': [fetcher.get_aqi_category(p)[0] for p in predictions]
-        })
-        st.dataframe(forecast_df, use_container_width=True, hide_index=True)
-    
-    # Health recommendations
-    st.subheader('💡 Health Recommendations')
-    
-    if pm25_value <= 50:
-        st.success('✅ **Good Air Quality** - Perfect for outdoor activities!')
-    elif pm25_value <= 100:
-        st.info('ℹ️ **Moderate Air Quality** - Generally acceptable')
-    elif pm25_value <= 150:
-        st.warning('⚠️ **Unhealthy for Sensitive Groups**')
-    elif pm25_value <= 200:
-        st.error('❌ **Unhealthy Air Quality** - Limit outdoor activities')
-    else:
-        st.error('🚨 **Hazardous!** - Stay indoors')
-    
-    # Footer
-    st.markdown('---')
-    col_f1, col_f2, col_f3 = st.columns(3)
-    
-    with col_f1:
-        st.metric('Data Source', 'OpenWeather')
-    with col_f2:
-        st.metric('Cities', '10')
-    with col_f3:
-        st.metric('Updated', datetime.now().strftime('%I:%M %p'))
-    
-else:
-    st.error('❌ Unable to fetch data. Add API key to Streamlit Secrets:')
-    st.code('OPENWEATHER_API_KEY = "28b67a4d5b8be4ade2b7bcfac97989f0"')
+# =========================
+# CITY TIERS
+# =========================
+CITY_TIERS = {
+    "TIER 1": {
+        "Delhi": (28.6139, 77.2090),
+        "Mumbai": (19.0760, 72.8777),
+        "Bangalore": (12.9716, 77.5946),
+        "Chennai": (13.0827, 80.2707),
+        "Kolkata": (22.5726, 88.3639),
+        "Hyderabad": (17.3850, 78.4867),
+        "Pune": (18.5204, 73.8567),
+        "Ahmedabad": (23.0225, 72.5714)
+    },
+    "TIER 2": {
+        "Jaipur": (26.9124, 75.7873),
+        "Indore": (22.7196, 75.8577),
+        "Bhopal": (23.2599, 77.4126),
+        "Nagpur": (21.1458, 79.0882),
+        "Lucknow": (26.8467, 80.9462),
+        "Surat": (21.1702, 72.8311),
+        "Vadodara": (22.3072, 73.1812),
+        "Kochi": (9.9312, 76.2673),
+        "Vizag": (17.6868, 83.2185)
+    },
+    "TIER 3": {
+        "Dehradun": (30.3165, 78.0322),
+        "Udaipur": (24.5854, 73.7125),
+        "Gwalior": (26.2183, 78.1828),
+        "Roorkee": (29.8543, 77.8880),
+        "Haridwar": (29.9457, 78.1642),
+        "Haldwani": (29.2183, 79.5130)
+    }
+}
 
-# Sidebar
-st.sidebar.markdown('---')
-st.sidebar.markdown('### 📖 About')
-st.sidebar.info('''
-Real-time AQI monitoring for Indian cities.
+# =========================
+# SIDEBAR
+# =========================
+st.sidebar.header("🏙 City Selection")
+tier = st.sidebar.selectbox("Select Tier", list(CITY_TIERS.keys()))
+city = st.sidebar.selectbox("Select City", list(CITY_TIERS[tier].keys()))
+lat, lon = CITY_TIERS[tier][city]
 
-**Tech Stack:**
-- Streamlit
-- OpenWeather API
-- Python Data Science
-- Statistical Forecasting
-''')
+# =========================
+# FETCH AQI
+# =========================
+try:
+    data = fetcher.fetch_current_aqi(lat, lon)
+except Exception as e:
+    st.error(f"API Error: {e}")
+    st.stop()
+
+pm25 = data["pm2_5"]
+category, color = fetcher.get_aqi_category(pm25)
+
+# =========================
+# KPI METRICS
+# =========================
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("PM2.5", f"{pm25:.1f}")
+c2.metric("PM10", f"{data['pm10']:.1f}")
+c3.metric("NO₂", f"{data['no2']:.1f}")
+c4.metric("O₃", f"{data['o3']:.1f}")
+
+st.markdown(
+    f"<div style='background:{color};padding:1rem;border-radius:10px;text-align:center;color:black'>"
+    f"<h2>{category}</h2></div>",
+    unsafe_allow_html=True
+)
+
+# =========================
+# MAP VISUALIZATION
+# =========================
+st.subheader("🗺 AQI Map View")
+
+map_df = pd.DataFrame({
+    "lat": [lat],
+    "lon": [lon],
+    "pm25": [pm25],
+    "color": [get_aqi_color(pm25)]
+})
+
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    map_df,
+    get_position="[lon, lat]",
+    get_radius=20000,
+    get_fill_color="color",
+    pickable=True
+)
+
+st.pydeck_chart(pdk.Deck(
+    layers=[layer],
+    initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=7),
+    tooltip={"html": f"<b>{city}</b><br>PM2.5: {pm25:.1f}"}
+))
+
+# =========================
+# 24H TREND
+# =========================
+st.subheader("📈 PM2.5 Trend (Last 24 Hours)")
+trend_df = generate_24h_trend(pm25)
+
+fig_trend = go.Figure()
+fig_trend.add_trace(go.Scatter(
+    x=trend_df["Time"],
+    y=trend_df["PM2.5"],
+    mode="lines+markers",
+    fill="tozeroy"
+))
+
+fig_trend.update_layout(
+    template="plotly_white",
+    height=450,
+    xaxis_title="Time",
+    yaxis_title="PM2.5 (µg/m³)"
+)
+
+st.plotly_chart(fig_trend, use_container_width=True)
+
+# =========================
+# FORECAST
+# =========================
+st.subheader("🎯 PM2.5 Forecast (Next 6 Hours)")
+forecast = predictor.predict(pm25)
+
+forecast_df = pd.DataFrame({
+    "Hour": [f"+{i+1}h" for i in range(6)],
+    "PM2.5": forecast,
+    "Category": [fetcher.get_aqi_category(v)[0] for v in forecast]
+})
+
+st.dataframe(forecast_df, use_container_width=True)
+
+# =========================
+# FOOTER
+# =========================
+st.caption("Data Source: OpenWeather | Trend: Mock (cached)")
